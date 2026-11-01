@@ -41,11 +41,44 @@ jobs:
           path: app/target/surefire-reports
           retention-days: 7
 
-  # ── Stage 2: Docker Build, Security Gate, and Push ─────────────────────────
+  # ── Stage 2: Filesystem Scan (SCA & Secrets) in Parallel ──────────────────
+  security-fs-and-secrets:
+    name: Trivy Dependency (SCA) & Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scan on Dependencies (SCA)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy Secret Scanner
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'secret'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+  # ── Stage 3: Docker Build, Container Scan, and Gated Push ──────────────────
   docker-security-and-push:
     name: Docker Build, Scan & Push
-    needs: build-and-test
+    needs: [build-and-test, security-fs-and-secrets]
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
     steps:
       - name: Checkout Source Code
@@ -55,17 +88,17 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != ''
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Extract Docker Image Metadata & Tags
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/self-healing-app
+          images: ${{ env.DOCKERHUB_USERNAME }}/self-healing-app
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short,prefix=sha-
@@ -97,11 +130,10 @@ jobs:
 
       # STEP 3: Push Image to Docker Hub (ONLY after scan passes, secrets present, and NOT on PR)
       - name: Push Docker Image to Docker Hub
-        if: github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != ''
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != ''
         uses: docker/build-push-action@v6
         with:
           context: ./app
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
-
