@@ -71,6 +71,15 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
+      - name: Run Trivy Misconfiguration Scan (IaC / Dockerfile & Compose)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
   # ── Stage 3: Docker Build, Container Scan, and Gated Push ──────────────────
   docker-security-and-push:
     name: Docker Build, Scan & Push
@@ -86,13 +95,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != ''
-        uses: docker/login-action@v3
-        with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Extract Docker Image Metadata & Tags
         id: meta
@@ -128,7 +130,15 @@ jobs:
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
 
-      # STEP 3: Push Image to Docker Hub (ONLY after scan passes, secrets present, and NOT on PR)
+      # STEP 3: Log in to Docker Hub (ONLY after all scans pass and NOT on PR)
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # STEP 4: Push Image to Docker Hub (ONLY after scan passes, secrets present, and NOT on PR)
       - name: Push Docker Image to Docker Hub
         if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != ''
         uses: docker/build-push-action@v6
